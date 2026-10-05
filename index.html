@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board control</title>
+<style>
+  :root {
+    --bg: #eef1ec; --panel: #f9faf7; --ink: #16231e; --muted: #5d6c64;
+    --line: #c9d2cb; --green: #1f6b4f; --amber: #e3a72f; --red: #b3372c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121a16; --panel: #1a2520; --ink: #e6ede8; --muted: #93a39a;
+            --line: #2d3b34; --green: #5fc79a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 1rem; margin: 0; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  section { background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row + .row { margin-top: 12px; }
+  .grow { flex: 1; }
+  select, button, input[type=text] {
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0c1410; } }
+  button:focus-visible, select:focus-visible, input:focus-visible
+    { outline: 2px solid var(--green); outline-offset: 2px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--line); flex: none; }
+  .dot.on { background: var(--green); }
+  .dot.led.on { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+  input[type=range] { width: 100%; accent-color: var(--green); }
+  .value { font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
+  .big { font-size: 2rem; font-variant-numeric: tabular-nums; }
+  #log { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--muted);
+         max-height: 160px; overflow-y: auto; white-space: pre-wrap; margin: 0; }
+  .err { color: var(--red); }
+  .lbl { color: var(--muted); font-size: 0.9rem; min-width: 3.5rem; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center;
+          border: 1px solid var(--line); background: var(--bg); color: var(--muted);
+          font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+  .chip.on { background: var(--green); border-color: var(--green); color: #fff; }
+  .grp { margin-top: 14px; }
+  .grp .chips { margin-top: 6px; }
+  .hex { font: 13px ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
+  button.chip { padding: 0; cursor: pointer; }
+  .chip.out.on { background: var(--amber); border-color: var(--amber); color: #16231e; }
+  @media (prefers-color-scheme: dark) { .chip.on { color: #0c1410; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Board control</h1>
+  <p class="sub">Pick the adapter's COM port, then read the DIP switches or talk to I2C devices.</p>
+
+  <section>
+    <div class="row">
+      <span class="dot" id="connDot"></span>
+      <input type="text" id="ports" class="grow" list="portlist" placeholder="COM3 or /dev/ttyUSB0" aria-label="Serial port">
+      <datalist id="portlist"></datalist>
+      <button id="refresh">Refresh</button>
+      <button id="connect" class="primary">Connect</button>
+    </div>
+    <div class="row"><span id="notice" class="err"></span></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <h2 class="grow">Inputs</h2>
+      <span class="lbl" id="ioState"></span>
+      <button id="ioLive">Pause</button>
+    </div>
+    <div class="grp" id="grpIN1"></div>
+    <div class="grp" id="grpIN2"></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <h2 class="grow">Outputs</h2>
+      <button id="allOn">All on</button>
+      <button id="allOff">All off</button>
+    </div>
+    <div class="row">
+      <button id="seqOn">Sequence on</button>
+      <label class="lbl" for="seqMs">Delay (ms)</label>
+      <input type="text" id="seqMs" value="200" size="5" inputmode="numeric">
+    </div>
+    <div class="grp" id="grpOUT1"></div>
+    <div class="grp" id="grpOUT2"></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <h2 class="grow">DIP switches</h2>
+      <button id="dipRead">Read</button>
+      <button id="dipLive">Start live reading</button>
+    </div>
+    <div class="row"><span class="lbl">DIP1</span><div class="chips" id="dip1"></div></div>
+    <div class="row"><span class="lbl">DIP2</span><div class="chips" id="dip2"></div></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <h2 class="grow">I2C</h2>
+      <select id="bus" aria-label="I2C bus"><option value="1">I2C1</option><option value="2">I2C2</option></select>
+      <button id="scan">Scan bus</button>
+    </div>
+    <div class="row"><span id="found" class="lbl">No scan yet.</span></div>
+    <div class="row">
+      <input type="text" id="addr" placeholder="Address, e.g. 0x50" size="16">
+      <input type="text" id="reg" placeholder="Register, e.g. 0x00" size="16">
+    </div>
+    <div class="row">
+      <input type="text" id="rlen" placeholder="Bytes to read" size="16" value="1">
+      <button id="i2cRead">Read</button>
+    </div>
+    <div class="row">
+      <input type="text" id="wdata" class="grow" placeholder="Bytes to write, e.g. 0x12 0x34">
+      <button id="i2cWrite">Write</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <input type="text" id="raw" class="grow" placeholder="Custom command, e.g. LED 1">
+      <button id="send">Send</button>
+    </div>
+    <div class="row"><pre id="log" class="grow" aria-live="polite"></pre></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let connected = false, pollTimer = null;
+
+function log(text, isErr) {
+  const line = document.createElement("div");
+  line.textContent = text;
+  if (isErr) line.className = "err";
+  $("log").appendChild(line);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+async function api(path, body) {
+  try {
+    const res = await fetch(path, body === undefined ? {} : {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body) });
+    return await res.json();
+  } catch (e) {
+    return {ok: false, error: "Can't reach the Flask server. Is python app.py still running?"};
+  }
+}
+
+async function cmd(c) {
+  if (!connected) { log("Connect to a port first.", true); return null; }
+  const r = await api("/api/command", {cmd: c});
+  if (r.ok) log(`${c}  ->  ${r.reply}`); else log(`${c}  ->  ${r.error}`, true);
+  return r.ok ? r.reply : null;
+}
+
+function setConnected(on, port) {
+  connected = on;
+  $("connDot").classList.toggle("on", on);
+  $("connect").textContent = on ? "Disconnect" : "Connect";
+  if (!on) { stopPoll(); stopIo(); }
+}
+
+async function loadPorts() {
+  const note = $("notice");
+  note.textContent = "";
+  if (location.protocol === "file:") {
+    note.textContent = "This page was opened as a file. Run python app.py, then open http://localhost:5000 in your browser.";
+    return;
+  }
+  const list = await api("/api/ports");
+  if (!Array.isArray(list)) { note.textContent = list.error || "Could not load ports."; return; }
+  $("portlist").innerHTML = list.map(p => `<option value="${p.device}">${p.label}</option>`).join("");
+  if (!list.length)
+    note.textContent = "No serial ports detected. Plug in the adapter, install its driver if needed, then press Refresh. You can also type the port name (for example COM3).";
+  else if (!$("ports").value) $("ports").value = list[0].device;
+}
+
+$("refresh").onclick = loadPorts;
+
+$("connect").onclick = async () => {
+  if (connected) { await api("/api/disconnect", {}); setConnected(false); log("Disconnected"); return; }
+  const r = await api("/api/connect", {port: $("ports").value});
+  if (r.ok) { setConnected(true); log(`Connected to ${r.port}`); startIo(); }
+  else log(`Could not connect: ${r.error}`, true);
+};
+
+function renderDip(id, bits) {
+  $(id).innerHTML = [...bits].map((b, i) =>
+    `<span class="chip ${b === "1" ? "on" : ""}" title="Switch ${i + 1}">${i + 1}</span>`).join("");
+}
+async function readDip() {
+  if (!connected) { log("Connect to a port first.", true); return stopPoll(); }
+  const r = await api("/api/command", {cmd: "DIP"});
+  if (!r.ok) { log(r.error, true); return stopPoll(); }
+  const m = r.reply.match(/DIP1=([01]+) DIP2=([01]+)/);
+  if (m) { renderDip("dip1", m[1]); renderDip("dip2", m[2]); }
+  else log(`DIP  ->  ${r.reply}`, true);
+}
+function stopPoll() { clearInterval(pollTimer); pollTimer = null; $("dipLive").textContent = "Start live reading"; }
+$("dipRead").onclick = readDip;
+$("dipLive").onclick = () => {
+  if (pollTimer) return stopPoll();
+  readDip(); pollTimer = setInterval(readDip, 500);
+  $("dipLive").textContent = "Stop live reading";
+};
+
+const bus = () => $("bus").value;
+function needAddr(needReg) {
+  if (!$("addr").value.trim() || (needReg && !$("reg").value.trim())) {
+    log("Enter an address" + (needReg ? " and a register" : "") + ".", true); return false; }
+  return true;
+}
+$("scan").onclick = async () => {
+  const r = await cmd(`I2C ${bus()} SCAN`);
+  if (r !== null) $("found").textContent = r === "NONE"
+    ? "No devices found. Check wiring and pull-up resistors." : "Found: " + r;
+};
+$("i2cRead").onclick  = () => needAddr(true) && cmd(`I2C ${bus()} RD ${$("addr").value} ${$("reg").value} ${$("rlen").value || 1}`);
+$("i2cWrite").onclick = () => needAddr(true) && $("wdata").value.trim() && cmd(`I2C ${bus()} WR ${$("addr").value} ${$("reg").value} ${$("wdata").value}`);
+
+/* ---- PCA9535 monitor: 2 input chips + 2 output chips ---- */
+const GROUPS = [
+  {id: "IN1",  title: "IN1 · 0x20 · I2C1",  out: false},
+  {id: "IN2",  title: "IN2 · 0x21 · I2C1",  out: false},
+  {id: "OUT1", title: "OUT1 · 0x22 · I2C2", out: true, n: 1},
+  {id: "OUT2", title: "OUT2 · 0x23 · I2C2", out: true, n: 2},
+];
+const ioVal = {IN1: 0, IN2: 0, OUT1: 0, OUT2: 0};
+let ioOn = false, ioBusy = false;
+
+function buildGroup(g) {
+  let h = `<div class="row"><span class="lbl">${g.title}</span><span class="hex" id="hex${g.id}">–</span></div>`;
+  for (const base of [0, 8]) {
+    h += '<div class="chips">';
+    for (let i = 0; i < 8; i++) {
+      const p = base + i;
+      h += g.out
+        ? `<button class="chip out" id="${g.id}_${p}" data-chip="${g.n}" data-pin="${p}" aria-pressed="false" title="${g.id} pin ${p}. Click to toggle.">${p}</button>`
+        : `<span class="chip" id="${g.id}_${p}" title="${g.id} pin ${p}">${p}</span>`;
+    }
+    h += "</div>";
+  }
+  $("grp" + g.id).innerHTML = h;
+}
+
+function renderIo() {
+  for (const g of GROUPS) {
+    const v = ioVal[g.id];
+    $("hex" + g.id).textContent = "0x" + v.toString(16).toUpperCase().padStart(4, "0");
+    for (let p = 0; p < 16; p++) {
+      const el = $(`${g.id}_${p}`), on = (v >> p) & 1;
+      el.classList.toggle("on", !!on);
+      if (g.out) el.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+}
+
+async function readIo() {
+  if (!connected) return false;
+  const r = await api("/api/command", {cmd: "IO"});
+  if (!r.ok) { log("IO  ->  " + r.error, true); return false; }
+  const m = r.reply.match(/IN1=0x([0-9A-F]+) IN2=0x([0-9A-F]+) OUT1=0x([0-9A-F]+) OUT2=0x([0-9A-F]+)/i);
+  if (!m) { log("IO  ->  " + r.reply, true); return false; }
+  ioVal.IN1 = parseInt(m[1], 16); ioVal.IN2 = parseInt(m[2], 16);
+  ioVal.OUT1 = parseInt(m[3], 16); ioVal.OUT2 = parseInt(m[4], 16);
+  renderIo();
+  return true;
+}
+
+function setIoState(on, text) {
+  ioOn = on;
+  $("ioLive").textContent = on ? "Pause" : "Resume";
+  $("ioState").textContent = text || (on ? "Live" : "Paused");
+}
+async function ioLoop() {
+  if (ioBusy) return;
+  ioBusy = true;
+  while (ioOn) {
+    if (!(await readIo())) { setIoState(false, "Stopped: see log"); break; }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  ioBusy = false;
+}
+function startIo() { if (!ioOn) { setIoState(true); ioLoop(); } }
+function stopIo()  { setIoState(false); }
+
+GROUPS.forEach(buildGroup);
+setIoState(false, "Connect to start");
+$("ioLive").onclick = () => ioOn ? stopIo() : (connected ? startIo() : log("Connect to a port first.", true));
+
+for (const id of ["OUT1", "OUT2"]) {
+  $("grp" + id).addEventListener("click", async e => {
+    const b = e.target.closest("button[data-pin]");
+    if (!b) return;
+    const n = b.dataset.chip, pin = +b.dataset.pin, cur = (ioVal["OUT" + n] >> pin) & 1;
+    if ((await cmd(`OUT ${n} ${pin} ${cur ? 0 : 1}`)) === "OK") readIo();
+  });
+}
+let seqRun = false;
+function seqButton() { $("seqOn").textContent = seqRun ? "Stop sequence" : "Sequence on"; }
+
+async function setAll(value) {
+  seqRun = false; seqButton();
+  for (const n of [1, 2]) if ((await cmd(`OUT ${n} PORT ${value}`)) !== "OK") break;
+  readIo();
+}
+$("allOn").onclick  = () => setAll(65535);
+$("allOff").onclick = () => setAll(0);
+
+/* Turns outputs on one at a time: OUT1 pin 0..15, then OUT2 pin 0..15. Click again to stop. */
+$("seqOn").onclick = async () => {
+  if (seqRun) { seqRun = false; seqButton(); return; }
+  if (!connected) { log("Connect to a port first.", true); return; }
+  const ms = Math.max(50, parseInt($("seqMs").value, 10) || 200);
+  seqRun = true; seqButton();
+  log(`Sequence on started (${ms} ms per output)`);
+  let finished = true;
+  outer: for (const n of [1, 2]) {
+    for (let p = 0; p < 16; p++) {
+      if (!seqRun) { finished = false; break outer; }
+      const r = await api("/api/command", {cmd: `OUT ${n} ${p} 1`});
+      if (!r.ok || r.reply !== "OK") { log(`Sequence stopped at OUT${n} pin ${p}: ${r.error || r.reply}`, true); finished = false; break outer; }
+      await readIo();
+      await new Promise(res => setTimeout(res, ms));
+    }
+  }
+  if (finished) log("Sequence on finished");
+  seqRun = false; seqButton();
+};
+
+$("send").onclick = () => { const v = $("raw").value.trim(); if (v) cmd(v); };
+$("raw").onkeydown = e => { if (e.key === "Enter") $("send").click(); };
+
+(async () => {
+  await loadPorts();
+  const s = await api("/api/status");
+  if (s.connected) { setConnected(true, s.port); startIo(); }
+})();
+</script>
+</body>
+</html>
